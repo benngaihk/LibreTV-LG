@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LibreTV</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; color: #fff;
+    font-family: "LG Smart UI", "Segoe UI", Roboto, "Noto Sans SC", sans-serif; }
+  body { display: flex; align-items: center; justify-content: center; }
+  main { width: 1100px; text-align: center; }
+  img.logo { width: 160px; height: 160px; border-radius: 32px; }
+  h1 { font-size: 56px; margin: 24px 0 8px; }
+  p { font-size: 28px; color: #aaa; margin: 8px 0; }
+  p.err { color: #ff6b81; }
+  code { color: #5ee7df; }
+  input { width: 100%; margin-top: 32px; padding: 20px 24px; font-size: 36px; color: #fff;
+    background: #111; border: 3px solid #444; border-radius: 16px; outline: none; }
+  input:focus { border-color: #5ee7df; }
+  .row { margin-top: 32px; display: flex; gap: 24px; justify-content: center; }
+  button { font-size: 32px; padding: 18px 56px; color: #fff; background: #222;
+    border: 3px solid #444; border-radius: 16px; cursor: pointer; }
+  button.primary { background: #1f6f6a; border-color: #1f6f6a; }
+  button:focus { outline: none; border-color: #fff; transform: scale(1.06); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <img class="logo" src="icon.png" alt="">
+  <h1>LibreTV</h1>
+
+  <section id="connect" hidden>
+    <p id="connect-msg">正在连接…</p>
+    <p><code id="connect-url"></code></p>
+    <p>按遥控器 <b>确定</b> 键修改服务器地址</p>
+  </section>
+
+  <section id="setup" hidden>
+    <p id="setup-msg">请输入 LibreTV 服务器地址</p>
+    <p>例如 <code>http://192.168.1.10:8080</code></p>
+    <input id="url" type="url" inputmode="url" autocomplete="off" spellcheck="false"
+           placeholder="http://服务器IP:8080">
+    <div class="row">
+      <button id="save" class="primary">连接</button>
+      <button id="cancel" hidden>取消</button>
+    </div>
+  </section>
+</main>
+
+<script src="config.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var KEY = 'libretv.serverUrl';
+  var BACK = 461;            // webOS 遥控器「返回」键
+  var COUNTDOWN_MS = 3000;   // 自动连接前留给用户按确定键改地址的时间
+  var PROBE_TIMEOUT_MS = 6000;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var connect = $('connect'), setup = $('setup');
+  var input = $('url'), saveBtn = $('save'), cancelBtn = $('cancel');
+  var timer = null, mode = 'connect';
+
+  function load() {
+    try { return localStorage.getItem(KEY) || ''; } catch (e) { return ''; }
+  }
+  function store(url) {
+    try { localStorage.setItem(KEY, url); } catch (e) { /* 忽略 */ }
+  }
+
+  // 补全协议并去掉末尾斜杠；非法输入返回空串
+  function normalize(raw) {
+    var v = String(raw || '').trim();
+    if (!v) return '';
+    if (!/^https?:\/\//i.test(v)) v = 'http://' + v;
+    try {
+      var u = new URL(v);
+      return u.origin + (u.pathname === '/' ? '' : u.pathname.replace(/\/+$/, ''));
+    } catch (e) { return ''; }
+  }
+
+  function show(which) {
+    mode = which;
+    connect.hidden = which !== 'connect';
+    setup.hidden = which !== 'setup';
+  }
+
+  function probe(url) {
+    var ctrl = new AbortController();
+    var t = setTimeout(function () { ctrl.abort(); }, PROBE_TIMEOUT_MS);
+    // no-cors：只关心服务器是否可达，不读取响应
+    return fetch(url + '/api/status', { mode: 'no-cors', cache: 'no-store', signal: ctrl.signal })
+      .then(function () { clearTimeout(t); return true; })
+      .catch(function () { clearTimeout(t); return false; });
+  }
+
+  function go(url) {
+    show('connect');
+    $('connect-url').textContent = url;
+    $('connect-msg').textContent = '正在连接…';
+    probe(url).then(function (ok) {
+      if (mode !== 'connect') return;       // 用户已进入编辑，放弃本次连接
+      if (ok) { location.replace(url); return; }
+      edit(url, '无法连接到 ' + url + '，请检查地址与网络', true);
+    });
+  }
+
+  function edit(prefill, msg, isError) {
+    clearTimeout(timer);
+    show('setup');
+    var m = $('setup-msg');
+    m.textContent = msg || '请输入 LibreTV 服务器地址';
+    m.className = isError ? 'err' : '';
+    input.value = prefill || '';
+    cancelBtn.hidden = !load();
+    input.focus();
+  }
+
+  function submit() {
+    var url = normalize(input.value);
+    if (!url) { edit(input.value, '地址格式不正确，请重新输入', true); return; }
+    store(url);
+    go(url);
+  }
+
+  function start() {
+    var saved = load();
+    var def = normalize(window.LIBRETV_DEFAULT_URL);
+    var query = location.search.indexOf('edit') !== -1;
+    var url = saved || def;
+
+    if (!url || query) { edit(url, '', false); return; }
+
+    show('connect');
+    $('connect-url').textContent = url;
+    $('connect-msg').textContent = '即将连接…';
+    timer = setTimeout(function () { go(url); }, COUNTDOWN_MS);
+  }
+
+  saveBtn.addEventListener('click', submit);
+  cancelBtn.addEventListener('click', function () { go(load()); });
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+  });
+
+  document.addEventListener('keydown', function (e) {
+    // 输入框/按钮自己处理确定键，避免同一次按键在提交后又被当成「修改地址」
+    if (e.target.closest && e.target.closest('input, button')) {
+      if (e.keyCode === BACK) { e.preventDefault(); if (mode === 'setup' && load()) go(load()); else window.close(); }
+      return;
+    }
+    if (mode === 'connect' && (e.key === 'Enter' || e.keyCode === 13)) {
+      e.preventDefault();
+      edit(load() || normalize(window.LIBRETV_DEFAULT_URL), '', false);
+    } else if (e.keyCode === BACK) {
+      e.preventDefault();
+      if (mode === 'setup' && load()) go(load()); else window.close();
+    }
+  });
+  document.addEventListener('click', function (e) {
+    if (mode === 'connect' && !e.target.closest('button')) {
+      edit(load() || normalize(window.LIBRETV_DEFAULT_URL), '', false);
+    }
+  });
+
+  start();
+})();
+</script>
+</body>
+</html>

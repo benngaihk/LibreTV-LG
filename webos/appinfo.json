@@ -1,0 +1,16 @@
+{
+  "id": "org.libretv.webos",
+  "version": "1.0.0",
+  "vendor": "LibreTV",
+  "type": "web",
+  "main": "index.html",
+  "title": "LibreTV",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "bgImage": "splash.png",
+  "bgColor": "#000000",
+  "resolution": "1920x1080",
+  "uiRevision": 2,
+  "disableBackHistoryAPI": false,
+  "requiredACG": []
+}
